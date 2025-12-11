@@ -1,0 +1,347 @@
+# Drift Detection & Capacity Planning Service
+
+Production-ready FastAPI service for drift detection and capacity planning with telemetry ingestion from Hawkeye, New Relic, and EKS/Kubernetes.
+
+## Architecture
+
+```
+├── main.py                          # FastAPI application entry point
+├── config.py                        # Configuration and settings
+├── requirements.txt                 # Python dependencies
+├── .env.example                     # Environment variables template
+├── db/
+│   └── cassandra.py                # Cassandra connection management
+├── models/
+│   └── telemetry.py                # Pydantic models
+├── repositories/
+│   ├── telemetry_repository.py     # Telemetry data access
+│   └── capacity_repository.py      # Capacity data access
+├── sources/
+│   ├── hawkeye.py                  # Hawkeye APM client
+│   ├── newrelic.py                 # New Relic client
+│   └── eks.py                      # EKS/Kubernetes client
+└── routers/
+    ├── telemetry.py                # Telemetry endpoints
+    ├── capacity.py                 # Capacity endpoints
+    ├── config.py                   # Config history endpoints
+    ├── drift.py                    # Drift events endpoints
+    └── ingestion.py                # Telemetry ingestion endpoints
+```
+
+## Features
+
+- **Multi-Source Telemetry Ingestion**: Pull metrics from Hawkeye, New Relic, and EKS
+- **Golden Signals**: Latency, throughput, error rates, CPU, memory, IO
+- **Cluster Capacity Tracking**: Node types, counts, utilization
+- **Configuration History**: Track runtime and policy changes
+- **Drift Detection**: Events, categories, severity levels
+- **Recommendations**: Automated remediation suggestions
+- **Cassandra Backend**: Scalable time-series storage
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Setup Environment
+
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+### 3. Initialize Cassandra
+
+Create keyspace and tables:
+
+```sql
+CREATE KEYSPACE drift_detection 
+WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 3};
+
+USE drift_detection;
+
+-- Run the CREATE TABLE statements from the requirements document
+```
+
+### 4. Run the Service
+
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 5. Access API Documentation
+
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## API Examples
+
+### Ingest from Hawkeye
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ingest/hawkeye \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": "prod-us-east-1",
+    "start_time": "2024-01-15T10:00:00Z",
+    "end_time": "2024-01-15T11:00:00Z",
+    "namespaces": ["production"]
+  }'
+```
+
+### Ingest from New Relic
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ingest/newrelic \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": "prod-us-east-1",
+    "start_time": "2024-01-15T10:00:00Z",
+    "end_time": "2024-01-15T11:00:00Z",
+    "namespaces": ["production"]
+  }'
+```
+
+### Ingest from EKS
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ingest/eks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": "prod-us-east-1",
+    "start_time": "2024-01-15T10:00:00Z",
+    "end_time": "2024-01-15T11:00:00Z",
+    "namespaces": ["production", "staging"]
+  }'
+```
+
+### Ingest from All Sources
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ingest/all \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": "prod-us-east-1",
+    "start_time": "2024-01-15T10:00:00Z",
+    "end_time": "2024-01-15T11:00:00Z",
+    "namespaces": ["production"]
+  }'
+```
+
+### Query Pod Metrics
+
+```bash
+# Get last 24 hours of metrics for a pod
+curl "http://localhost:8000/api/v1/telemetry/metrics/pod/prod-us-east-1/production/app-xyz-12345?hours=24"
+```
+
+### Query Cluster Capacity
+
+```bash
+# Get latest capacity snapshot
+curl http://localhost:8000/api/v1/capacity/snapshots/latest/prod-us-east-1
+
+# Get capacity snapshots by date range
+curl "http://localhost:8000/api/v1/capacity/snapshots/prod-us-east-1?start_date=2024-01-01&end_date=2024-01-31"
+```
+
+### Create Drift Event
+
+```bash
+curl -X POST http://localhost:8000/api/v1/drift/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": "prod-us-east-1",
+    "env": "prod",
+    "drift_date": "2024-01-15",
+    "drift_id": "550e8400-e29b-41d4-a716-446655440000",
+    "drift_category": "CPU_MEMORY_DRIFT",
+    "severity": "major",
+    "workload_name": "payment-service",
+    "namespace": "production",
+    "start_ts": "2024-01-15T10:00:00Z",
+    "detection_method": "anomaly",
+    "confidence_score": 0.92,
+    "status": "open"
+  }'
+```
+
+### Create Recommendation
+
+```bash
+curl -X POST http://localhost:8000/api/v1/drift/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_id": "prod-us-east-1",
+    "env": "prod",
+    "drift_date": "2024-01-15",
+    "drift_id": "550e8400-e29b-41d4-a716-446655440000",
+    "rec_id": "660e8400-e29b-41d4-a716-446655440001",
+    "recommendation_type": "hpa_tune",
+    "recommendation_json": "{\"min_replicas\": 3, \"max_replicas\": 15}",
+    "estimated_savings_usd": 450.0,
+    "auto_approved": false
+  }'
+```
+
+## Scheduling Ingestion
+
+### Using Kubernetes CronJob
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: drift-ingestion-hourly
+spec:
+  schedule: "0 * * * *"  # Every hour
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: ingestion
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              curl -X POST http://drift-service:8000/api/v1/ingest/all \
+                -H "Content-Type: application/json" \
+                -d "{
+                  \"cluster_id\": \"prod-us-east-1\",
+                  \"start_time\": \"$(date -u -d '1 hour ago' +%Y-%m-%dT%H:00:00Z)\",
+                  \"end_time\": \"$(date -u +%Y-%m-%dT%H:00:00Z)\",
+                  \"namespaces\": [\"production\"]
+                }"
+          restartPolicy: OnFailure
+```
+
+### Using Cron
+
+```bash
+# Add to crontab
+0 * * * * curl -X POST http://localhost:8000/api/v1/ingest/all \
+  -H "Content-Type: application/json" \
+  -d '{"cluster_id":"prod-us-east-1","start_time":"'$(date -u -d '1 hour ago' +\%Y-\%m-\%dT\%H:00:00Z)'","end_time":"'$(date -u +\%Y-\%m-\%dT\%H:00:00Z)'","namespaces":["production"]}'
+```
+
+## Data Model
+
+### Tables
+
+- **drift_telemetry_pod_metrics**: Pod-level golden signals and resource metrics
+- **drift_cluster_capacity_snapshots**: Cluster node capacity and utilization
+- **drift_config_history**: Configuration and policy changes
+- **drift_events**: Drift detection events
+- **drift_recommendations**: Remediation recommendations
+
+### Key Patterns
+
+- Time-series data partitioned by date and hour
+- Cluster-scoped queries for efficiency
+- Batch inserts for high throughput
+
+## Configuration
+
+### Cassandra Connection
+
+Set environment variables:
+- `CASSANDRA_HOSTS`: Comma-separated list of Cassandra nodes
+- `CASSANDRA_KEYSPACE`: Keyspace name
+- `CASSANDRA_USERNAME` / `CASSANDRA_PASSWORD`: Authentication
+
+### External Sources
+
+**Hawkeye:**
+- `HAWKEYE_BASE_URL`: API endpoint
+- `HAWKEYE_API_KEY`: Authentication key
+
+**New Relic:**
+- `NEWRELIC_API_KEY`: API key
+- `NEWRELIC_ACCOUNT_ID`: Account ID
+
+**EKS/Kubernetes:**
+- `EKS_IN_CLUSTER`: Use in-cluster config (true/false)
+- `EKS_KUBECONFIG_PATH`: Path to kubeconfig file
+- `EKS_METRICS_ENDPOINT`: Prometheus endpoint URL
+
+## Production Deployment
+
+### Docker
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drift-detection-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: drift-detection
+  template:
+    metadata:
+      labels:
+        app: drift-detection
+    spec:
+      containers:
+      - name: api
+        image: drift-detection:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: CASSANDRA_HOSTS
+          value: "cassandra-0.cassandra,cassandra-1.cassandra"
+        - name: EKS_IN_CLUSTER
+          value: "true"
+        envFrom:
+        - secretRef:
+            name: drift-detection-secrets
+```
+
+## Monitoring
+
+The service exposes:
+- `/health` - Health check endpoint
+- Structured logging for all operations
+- Error tracking in ingestion responses
+
+## Development
+
+```bash
+# Install dev dependencies
+pip install -r requirements.txt
+
+# Run tests (add pytest later)
+pytest tests/
+
+# Format code
+black .
+isort .
+
+# Type checking
+mypy .
+```
+
+## License
+
+MIT
