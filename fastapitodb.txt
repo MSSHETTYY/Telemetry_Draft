@@ -191,3 +191,9 @@ SQLAlchemy models aligned with your ERD, ready to extend for all tables.
 FastAPI endpoints to create and read SERVICE_SUMMARY rows, which you can mirror for SRE_RECOMMENDATIONS, COST_SAVINGS, etc.
 
 Adjust column types, text lengths, and relationships once you finalize the exact PostgreSQL DDL, but the connection pattern and FastAPI wiring stay the same. The approach follows the recommended pattern of using SQLAlchemy with FastAPI for relational databases.
+
+
+
+mkdir -p app/{core,db,models,schemas,crud,api/v1,drift_engine,capacity_planner,guardians}
+mkdir -p alembic/versions tests
+
