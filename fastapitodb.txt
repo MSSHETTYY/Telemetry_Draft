@@ -1,0 +1,193 @@
+Here is a minimal FastAPI setup that connects to a PostgreSQL DB and is ready for your tables (SERVICE_SUMMARY, SRE_RECOMMENDATIONS, etc.). Adapt column definitions to match your exact schema names and types.
+
+Install dependencies
+bash
+pip install "fastapi[all]" sqlalchemy psycopg2-binary pydantic~=2.0
+Database and models
+python
+# db.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+POSTGRES_USER = "your_user"
+POSTGRES_PASSWORD = "your_password"
+POSTGRES_DB = "your_db"
+POSTGRES_HOST = "localhost"
+POSTGRES_PORT = 5432
+
+DATABASE_URL = (
+    f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
+    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+)
+
+engine = create_engine(DATABASE_URL, echo=False, future=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+python
+# models.py
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Float,
+    Text,
+    JSON,
+    TIMESTAMP,
+    ForeignKey,
+)
+from sqlalchemy.orm import relationship
+from db import Base
+
+class ServiceSummary(Base):
+    __tablename__ = "service_summary"
+
+    uniqueid = Column(Integer, primary_key=True, index=True)
+    kube_cluster_id = Column(String, nullable=False)
+    resource_type = Column(String)          # DEPLOYMENT, DS, etc.
+    min_pods = Column(Integer)
+    max_pods = Column(Integer)
+    current_pods = Column(Integer)
+    tpm_per_pod_configured = Column(Float)
+    tpm_current = Column(Float)
+    number_of_errors = Column(Integer)
+    response_time_avg = Column(Float)
+    response_time_p95 = Column(Float)
+    runtime_state_jsonb = Column(JSON)
+    collected_at_timestamp = Column(TIMESTAMP)
+
+    # example: one service can have many SRE recommendations
+    sre_recommendations = relationship(
+        "SreRecommendation",
+        back_populates="service",
+        primaryjoin="ServiceSummary.kube_cluster_id == foreign(SreRecommendation.kube_cluster_id)",
+        viewonly=True,
+    )
+
+class SreRecommendation(Base):
+    __tablename__ = "sre_recommendations"
+
+    recommendation_id = Column(Integer, primary_key=True, index=True)
+    kube_cluster_id = Column(String, nullable=False)
+    scope_type = Column(String)                 # CLUSTER, POD, SERVICE, NODE
+    scope_name = Column(String)
+    recommendation_type = Column(String)
+    severity = Column(String)                   # LOW, MEDIUM, HIGH, CRITICAL
+    confidence_score = Column(Float)
+    recommendation_text = Column(Text)
+    technical_details_jsonb = Column(JSON)
+    expected_impact_jsonb = Column(JSON)
+    source = Column(String)
+    created_at = Column(TIMESTAMP)
+    reviewed_at = Column(TIMESTAMP, nullable=True)
+    applied_at = Column(TIMESTAMP, nullable=True)
+
+    service = relationship(
+        "ServiceSummary",
+        back_populates="sre_recommendations",
+        primaryjoin="foreign(SreRecommendation.kube_cluster_id) == ServiceSummary.kube_cluster_id",
+        viewonly=True,
+    )
+
+class ResourceCost(Base):
+    __tablename__ = "resource_cost"
+
+    id = Column(Integer, primary_key=True, index=True)
+    instance_type = Column(String, unique=True)
+    monthly_cost = Column(Float)
+
+class CostSavings(Base):
+    __tablename__ = "cost_savings"
+
+    cost_saving_id = Column(Integer, primary_key=True, index=True)
+    recommendation_id = Column(
+        Integer,
+        ForeignKey("sre_recommendations.recommendation_id"),
+        nullable=False,
+    )
+    resource_type = Column(String)
+    detected_reason = Column(String)
+    current_cost_monthly = Column(Float)
+    estimated_savings = Column(Float)
+    realized_savings = Column(Float)
+
+    recommendation = relationship("SreRecommendation")
+The above shows how to map a few of your tables with SQLAlchemy; you can add the remaining tables (KUBE_CLUSTER, POD_CONFIG, RUNTIME_METRICS, CLUSTER_SUMMARY, etc.) similarly using the field names from your diagrams.
+
+FastAPI app and dependency
+python
+# main.py
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from db import Base, engine, SessionLocal
+from models import ServiceSummary, SreRecommendation, CostSavings, ResourceCost
+
+from pydantic import BaseModel
+from typing import List
+
+# ---------- Pydantic schemas ----------
+
+class ServiceSummaryCreate(BaseModel):
+    kube_cluster_id: str
+    resource_type: str | None = None
+    min_pods: int | None = None
+    max_pods: int | None = None
+    current_pods: int | None = None
+
+class ServiceSummaryRead(ServiceSummaryCreate):
+    uniqueid: int
+
+    class Config:
+        from_attributes = True
+
+# ---------- DB session dependency ----------
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# ---------- FastAPI app ----------
+
+app = FastAPI()
+
+@app.on_event("startup")
+def on_startup():
+    # Creates tables if they do not exist; comment out if you already manage schema via migrations
+    Base.metadata.create_all(bind=engine)
+
+# Example CRUD for SERVICE_SUMMARY
+
+@app.post("/service-summary/", response_model=ServiceSummaryRead)
+def create_service_summary(
+    payload: ServiceSummaryCreate, db: Session = Depends(get_db)
+):
+    obj = ServiceSummary(**payload.model_dump())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+@app.get("/service-summary/", response_model=List[ServiceSummaryRead])
+def list_service_summaries(db: Session = Depends(get_db)):
+    items = db.query(ServiceSummary).all()
+    return items
+
+@app.get("/service-summary/{uniqueid}", response_model=ServiceSummaryRead)
+def get_service_summary(uniqueid: int, db: Session = Depends(get_db)):
+    obj = db.get(ServiceSummary, uniqueid)
+    if not obj:
+        raise HTTPException(status_code=404, detail="ServiceSummary not found")
+    return obj
+This setup gives you:
+
+Reusable PostgreSQL connection and session handling.
+
+SQLAlchemy models aligned with your ERD, ready to extend for all tables.
+
+FastAPI endpoints to create and read SERVICE_SUMMARY rows, which you can mirror for SRE_RECOMMENDATIONS, COST_SAVINGS, etc.
+
+Adjust column types, text lengths, and relationships once you finalize the exact PostgreSQL DDL, but the connection pattern and FastAPI wiring stay the same. The approach follows the recommended pattern of using SQLAlchemy with FastAPI for relational databases.
